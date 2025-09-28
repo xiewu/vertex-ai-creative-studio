@@ -77,6 +77,14 @@ def generate_vto_image(
 
     model_endpoint = f"projects/{cfg.PROJECT_ID}/locations/{cfg.LOCATION}/publishers/google/models/{cfg.VTO_MODEL_ID}"
 
+    print(f"--- VTO API Request ---")
+    print(f"Endpoint: {model_endpoint}")
+    print(f"Instance Person Image: {https_url_to_gcs_uri(person_gcs_url)}")
+    print(f"Instance Product Image: {https_url_to_gcs_uri(product_gcs_url)}")
+    print(f"Sample Count: {sample_count}")
+    print(f"Base Steps: {base_steps}")
+    print(f"-----------------------")
+
     instance = {
         "personImage": {
             "image": {

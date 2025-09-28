@@ -846,3 +846,40 @@ def generate_transformation_prompts(image_uris: list[str]) -> list[Transformatio
 
     prompts = TransformationPrompts.model_validate_json(response.text)
     return prompts.transformations
+
+
+@retry(
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+    stop=stop_after_attempt(3),
+    retry=retry_if_exception_type(Exception),
+    reraise=True,
+)
+def analyze_images_with_gemini(prompt: str, image_uris: list[str]) -> str:
+    """Analyzes a list of images with a given prompt using Gemini.
+
+    Args:
+        prompt: The text prompt for the analysis.
+        image_uris: A list of GCS URIs for the images to analyze.
+
+    Returns:
+        The text response from the model.
+    """
+    model_name = cfg.MODEL_ID  # Use a fast, general-purpose model
+
+    prompt_parts = [prompt]
+    for uri in image_uris:
+        # Assuming PNG for now, could be made more robust
+        prompt_parts.append(types.Part.from_uri(file_uri=uri, mime_type="image/png"))
+
+    try:
+        response = client.models.generate_content(
+            model=model_name,
+            contents=prompt_parts,
+            config=types.GenerateContentConfig(
+                response_modalities=["TEXT"],
+            ),
+        )
+        return response.text
+    except Exception as e:
+        print(f"Error during Gemini image analysis: {e}")
+        raise GenerationError(f"Failed to analyze images: {e}") from e

@@ -73,6 +73,8 @@ class PageState:
     product_image_file: me.UploadedFile = None
     product_image_gcs: str = ""
     result_gcs_uris: list[str] = field(default_factory=list)  # pylint: disable=invalid-field-call
+    is_analyzing: bool = False
+    critique_results: list[dict] = field(default_factory=list)
     vto_sample_count: int = 4
     vto_base_steps: int = 32
     is_loading: bool = False
@@ -176,22 +178,24 @@ def on_generate(e: me.ClickEvent):
     app_state = me.state(AppState)
     state = me.state(PageState)
     state.is_loading = True
+    state.critique_results = []
+    state.result_gcs_uris = []
     yield
 
+    generated_uris = []
     try:
-        result_gcs_uris = generate_vto_image(
+        generated_uris = generate_vto_image(
             state.person_image_gcs,
             state.product_image_gcs,
             state.vto_sample_count,
             state.vto_base_steps,
         )
-        print(f"Result GCS URIs: {result_gcs_uris}")
-        state.result_gcs_uris = result_gcs_uris
+        state.result_gcs_uris = generated_uris
         add_media_item(
             user_email=app_state.user_email,
             model=config.VTO_MODEL_ID,
             mime_type="image/png",
-            gcs_uris=result_gcs_uris,
+            gcs_uris=generated_uris,
             person_image_gcs=state.person_image_gcs,
             product_image_gcs=state.product_image_gcs,
         )
@@ -201,7 +205,25 @@ def on_generate(e: me.ClickEvent):
     finally:
         state.is_loading = False
         yield
-    yield
+
+    if generated_uris:
+        state.is_analyzing = True
+        yield
+
+        try:
+            for uri in generated_uris:
+                critique_data = run_vto_critique_workflow(
+                    apparel_image_gcs=state.product_image_gcs,
+                    result_image_gcs=uri,
+                )
+                state.critique_results.append(critique_data)
+                yield
+        except Exception as e:
+            # Handle critique errors silently for now, maybe a snackbar later
+            print(f"Error during VTO critique: {e}")
+        finally:
+            state.is_analyzing = False
+            yield
 
 
 def on_sample_count_change(e: me.SliderValueChangeEvent):
@@ -405,7 +427,20 @@ def page():
                     )
                 ):
                     me.progress_spinner()
-
+                    
+            if state.is_analyzing:
+                with me.box(
+                    style=me.Style(
+                        display="flex",
+                        align_items="center",
+                        justify_content="center",
+                        gap=8,
+                        margin=me.Margin(top=16),
+                    )
+                ):
+                    me.progress_spinner(diameter=18)
+                    me.text("Analyzing results...")
+                    
             if state.result_gcs_uris:
                 print(f"Images: {state.result_gcs_uris}")
                 with me.box(
@@ -417,11 +452,22 @@ def page():
                         justify_content="center",
                     )
                 ):
-                    for gcs_uri in state.result_gcs_uris:
+                    for i, gcs_uri in enumerate(state.result_gcs_uris):
                         with me.box(style=me.Style(display="flex", flex_direction="column", gap=8)):
                             me.image(
                                 src=gcs_uri_to_https_url(gcs_uri), style=me.Style(width="400px", border_radius=12)
                             )
+                            # Display critique if available
+                            if i < len(state.critique_results):
+                                critique = state.critique_results[i]
+                                with me.box(style=me.Style(
+                                    background=me.theme_var("surface-container-lowest"),
+                                    padding=me.Padding.all(12),
+                                    border_radius=8,
+                                )):
+                                    me.text("Critique", type="label-large")
+                                    me.markdown(critique.get("placement_analysis", "Critique not available."))
+
                             with me.box(style=me.Style(display="flex", flex_direction="row", gap=8, justify_content="center")):
                                 edit_button(gcs_uri=gcs_uri)
                                 veo_button(gcs_uri=gcs_uri)
